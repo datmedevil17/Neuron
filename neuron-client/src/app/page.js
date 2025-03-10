@@ -5,6 +5,7 @@ import { FeaturesSectionDemo } from './components/ui/FeaturesSectionDemo';
 import { SmartContractsMarquee } from './components/SmartContractsMarquee';
 import { EndToEndToolsSection } from './components/EndToEndToolsSection';
 import { ModernFooter } from './components/Footer';
+import { TailwindcssButton } from './components/button';
 
 
 const words = [
@@ -47,23 +48,8 @@ const page = () => {
             contracts effortlessly with AI-driven tools and one-click deployment to
             Kiichain’s testnet.
           </p>
-          <button
-      type="button"
-      className="inline-flex items-center px-10 py-4 rounded-md bg-white text-black font-medium shadow-sm hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2"
-    >
-      {/* Lightning icon (SVG) */}
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="h-4 w-4 mr-2"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-      >
-        <path
-          d="M13 10V3L4 14h7v7l9-11h-7z"
-        />
-      </svg>
-      Get started
-    </button>
+          
+    <TailwindcssButton />
         </div>
       </section>
       <FeaturesSectionDemo />
