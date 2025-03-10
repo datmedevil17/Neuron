@@ -5,6 +5,8 @@ import { FeaturesSectionDemo } from './components/ui/FeaturesSectionDemo';
 import { SmartContractsMarquee } from './components/SmartContractsMarquee';
 import { EndToEndToolsSection } from './components/EndToEndToolsSection';
 import { ModernFooter } from './components/Footer';
+import { TailwindcssButton } from './components/buttons';
+
 
 
 const words = [
@@ -43,8 +45,8 @@ const page = () => {
             contracts effortlessly with AI-driven tools and one-click deployment to
             Kiichain’s testnet.
           </p>
-          
-    <TailwindcssButton />
+          <TailwindcssButton />
+    
         </div>
       </section>
       <FeaturesSectionDemo />
