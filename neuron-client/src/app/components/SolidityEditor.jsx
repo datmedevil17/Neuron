@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import axios from "axios";
 import { useDeployContract, useSwitchChain, useAccount, usePublicClient } from "wagmi";
@@ -12,13 +12,14 @@ const SolidityEditor = () => {
   const { deployContract } = useDeployContract();
   const { isConnected, address } = useAccount();
   const { switchChain } = useSwitchChain();
-  const publicClient = usePublicClient();//
+  const publicClient = usePublicClient();
+  const editorRef = useRef(null);
 
   // State variables
   const [txHash, setTxHash] = useState();
   const [contractAddress, setContractAddress] = useState("");
-  const [data, setData] = useState({}); // Stores only the data, e.g., {"myNumber": 0}
-  const [returnedVar, setReturnedVar] = useState(""); // Stores the name of the returned variable, e.g., "myNumber"
+  const [data, setData] = useState({});
+  const [returnedVar, setReturnedVar] = useState("");
   const [code, setCode] = useState(`// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -36,7 +37,60 @@ contract MyContract {
   const [abi, setAbi] = useState("");
   const [bytecode, setBytecode] = useState("");
   const [compilationError, setCompilationError] = useState("");
-  const [functionInputs, setFunctionInputs] = useState({}); // New state for function arguments
+  const [functionInputs, setFunctionInputs] = useState({});
+  const iframeRef = useRef(null);
+  
+  // AI Assistant states
+  const [showAiHelper, setShowAiHelper] = useState(false);
+  const [helperPosition, setHelperPosition] = useState({ x: 0, y: 0 });
+  const [selectedCode, setSelectedCode] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+
+  const [showAiResponseModal, setShowAiResponseModal] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  // Preview function states
+// Preview function states
+const [showPreviewPanel, setShowPreviewPanel] = useState(false);
+const [previewQuery, setPreviewQuery] = useState("");
+const [generatedComponent, setGeneratedComponent] = useState("");
+const [isGeneratingComponent, setIsGeneratingComponent] = useState(false);
+const [previewCode, setPreviewCode] = useState("");
+const reactEditorRef = useRef(null);
+  // Handle editor mounting
+  const handleEditorDidMount = (editor, monaco) => {
+    editorRef.current = editor;
+    
+    // Add selection change listener to show AI helper button
+    editor.onDidChangeCursorSelection((e) => {
+      if (e.selection.isEmpty()) {
+        setShowAiHelper(false);
+        return;
+      }
+      
+      const selectedText = editor.getModel().getValueInRange(e.selection);
+      if (selectedText && selectedText.length > 0) {
+        setSelectedCode(selectedText);
+        
+        // Get position for helper button (near selection end)
+        const endPosition = editor.getScrolledVisiblePosition(e.selection.getEndPosition());
+        if (endPosition) {
+          // Position the button near the end of selection
+          setHelperPosition({
+            x: endPosition.left + 10,
+            y: endPosition.top + 20
+          });
+          setShowAiHelper(true);
+        }
+      } else {
+        setShowAiHelper(false);
+      }
+    });
+    
+    // Hide helper when editor loses focus
+    editor.onDidBlurEditorWidget(() => {
+      setTimeout(() => setShowAiHelper(false), 200);
+    });
+  };
 
   // Track contract address after deployment
   useEffect(() => {
@@ -47,11 +101,50 @@ contract MyContract {
       }
     };
     fetchContractAddress();
-  }, [txHash, publicClient]);//
+  }, [txHash, publicClient]);
 
   // Handle editor changes
   const handleEditorChange = (value) => {
     setCode(value);
+  };
+
+  // Ask AI about selected code
+  const askAi = async () => {
+    if (!selectedCode) return;
+    
+    setIsAiLoading(true);
+    setShowAiResponseModal(true);
+    setAiResponse("Loading...");
+    
+    try {
+      // Send the selected code to an AI service for analysis
+      const response = await axios({
+        url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyCHK_9m7dwti-kYYWmr-ciR-Kp9_QTgvOc",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        data: {
+          contents: [
+            {
+              parts: [{ 
+                text: `Explain this Solidity code in detail. What does it do? Are there any potential issues or optimizations?
+                
+                ${selectedCode} and dont provide the output in github markdown and html elements keep it as short as possible mostly one or two lines` 
+              }],
+            },
+          ],
+        },
+      });
+      
+      const aiText = response.data.candidates[0].content.parts[0].text;
+      setAiResponse(aiText);
+    } catch (error) {
+      console.error("Error querying AI:", error);
+      setAiResponse("Sorry, I couldn't analyze that code right now. Please try again.");
+    } finally {
+      setIsAiLoading(false);
+    }
   };
 
   // Compile Solidity code
@@ -224,8 +317,8 @@ contract MyContract {
     try {
       const response = await resolveQuery(data, temp, code);
       const res = JSON.parse(response);
-      setData(res.data); // Update data with the res data, e.g., {"myNumber": 0}
-      setReturnedVar(res.return); // Update returnedVar with the name of the returned variable, e.g., "myNumber"
+      setData(res.data);
+      setReturnedVar(res.return);
     } catch (error) {
       console.error("Error executing function:", error);
       alert("Function execution failed!");
@@ -277,10 +370,11 @@ contract MyContract {
       return <div className="text-red-500">Error loading functions</div>;
     }
   };
+  
   const getTestnet = async () => {
     await switchChain({ chainId: 57054 });
-
   }
+  
   const getVulnerabilityReport = async () => {
     try {
       const prompt = `Analyze this Solidity smart contract for security vulnerabilities, potential issues, and best practices. Provide a clear, concise report highlighting main security concerns, gas optimizations, and recommendations. Focus on:
@@ -288,6 +382,8 @@ contract MyContract {
       2. Gas optimization opportunities
       3. Code quality issues
       4. Best practices violations
+      5.Keep it as concise as possible 
+      6.Don't add github markdown and html elements in it
       
       Contract code:
       ${code}`;
@@ -335,15 +431,167 @@ contract MyContract {
       alert("Failed to generate vulnerability report. Please try again.");
     }
   };
-  const copyToClipboard = (text) => {
-
-  }
-  const downloadStandalone = async () => {
-
-  }
-  const highlightErrors=async()=>{
+  const cleanJsonString = (text) => {
+    try {
+      // Remove any markdown code block syntax and whitespace
+      const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+      return cleaned;
+    } catch (error) {
+      console.error('Error cleaning JSON string:', error);
+      return '[]'; // Return empty array if cleaning fails
+    }
+  };
+  const highlightErrors = async () => {
+    if (!editorRef.current) return;
     
-  }
+    // Show scanning animation
+    const editor = editorRef.current;
+    const model = editor.getModel();
+    
+    // Add scanning animation class to editor
+    editor.getDomNode().classList.add('scanning-animation');
+    
+    try {
+      // Get the current code
+      const currentCode = model.getValue();
+      
+      // Query AI for code analysis
+      const response = await axios({
+        url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyCHK_9m7dwti-kYYWmr-ciR-Kp9_QTgvOc",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        data: {
+          contents: [
+            {
+              parts: [{ 
+                text: `Analyze this Solidity code and return a JSON array of issues. For each issue include:
+                - startLine: line number where issue starts
+                - endLine: line number where issue ends
+                - severity: "error", "warning", or "info"
+                - message: Short one-line description of the issue
+                - suggestion: Brief one-line fix suggestion
+                
+                Code to analyze:
+                ${currentCode}`
+              }],
+            },
+          ],
+        },
+      });
+      const cleanedResponse = cleanJsonString(response.data.candidates[0].content.parts[0].text);
+
+  
+      const issues = JSON.parse(cleanedResponse);
+      
+      // Clear existing decorations
+      const oldDecorations = editor.getModel().getAllDecorations();
+      editor.deltaDecorations(oldDecorations.map(d => d.id), []);
+      
+      // Add new decorations for each issue
+      const decorations = issues.map(issue => ({
+        range: new monaco.Range(
+          issue.startLine,
+          1,
+          issue.endLine,
+          1
+        ),
+        options: {
+          isWholeLine: true,
+          className: `highlight-${issue.severity}`,
+          glyphMarginClassName: `glyph-${issue.severity}`,
+          hoverMessage: { value: `${issue.message}\n\nSuggestion: ${issue.suggestion}` },
+          glyphMarginHoverMessage: { value: `${issue.severity.toUpperCase()}: ${issue.message}` }
+        }
+      }));
+      
+      editor.deltaDecorations([], decorations);
+      
+    } catch (error) {
+      console.error('Error analyzing code:', error);
+      // Show user-friendly error message
+      alert('Could not analyze code. Please try again.');
+    } finally {
+      // Remove scanning animation
+      setTimeout(() => {
+        editor.getDomNode().classList.remove('scanning-animation');
+      }, 1000);
+    }
+  };
+  const handleReactEditorDidMount = (editor) => {
+    reactEditorRef.current = editor;
+  };
+  
+  const handleReactEditorChange = (value) => {
+    setPreviewCode(value);
+  };
+  const generateReactComponent = async () => {
+    if (!previewQuery.trim()) return;
+    
+    setIsGeneratingComponent(true);
+    
+    try {
+      // Extract contract information from current code
+      const contractFunctions = [];
+      
+      if (abi) {
+        try {
+          const parsedAbi = JSON.parse(abi);
+          parsedAbi
+            .filter(item => item.type === "function")
+            .forEach(func => {
+              contractFunctions.push({
+                name: func.name,
+                inputs: func.inputs,
+                outputs: func.outputs,
+                stateMutability: func.stateMutability
+              });
+            });
+        } catch (error) {
+          console.error("Error parsing ABI:", error);
+        }
+      }
+  
+      const response = await axios({
+        url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyCHK_9m7dwti-kYYWmr-ciR-Kp9_QTgvOc",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        data: {
+          contents: [
+            {
+              parts: [{ 
+                text: `Create a React component based on this description: "${previewQuery}"
+                
+                The component should interact with a smart contract that has these functions: ${JSON.stringify(contractFunctions)}
+                
+                Contract address: ${contractAddress || "0x..."}
+                
+                Return only valid React code that uses Tailwind CSS for styling. Don't include imports or explanations.
+                Use standard React hooks (useState, useEffect) and assume wagmi hooks are available for blockchain interaction.
+                Make sure the component looks professional and has good error handling.`
+              }],
+            },
+          ],
+        },
+      });
+      
+      const generatedCode = response.data.candidates[0].content.parts[0].text;
+      
+      // Clean up the code to remove any markdown formatting
+      const cleanedCode = generatedCode.replace(/```jsx|```react|```js|```/g, '').trim();
+      
+      setPreviewCode(cleanedCode);
+      setGeneratedComponent(cleanedCode);
+    } catch (error) {
+      console.error("Error generating React component:", error);
+      setGeneratedComponent("// Error generating component. Please try again.");
+    } finally {
+      setIsGeneratingComponent(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -368,31 +616,144 @@ contract MyContract {
           Testnet
         </button>
         <button className="bg-orange-500 px-4 py-2 rounded text-white font-bold hover:bg-green-400" onClick={getVulnerabilityReport}>
-        Report
+          Report
         </button>
         <button className="bg-orange-500 px-4 py-2 rounded text-white font-bold hover:bg-green-400" onClick={highlightErrors}>
-        Find Errors
+          Find Errors
         </button>
-        
-
       </div>
 
-      {/* Solidity Code Editor */}
-      <Editor
-        height="400px"
-        width="100%"
-        theme="vs-dark"
-        defaultLanguage="solidity"
-        defaultValue={code}
-        onChange={handleEditorChange}
-        options={{
-          fontSize: 14,
-          minimap: { enabled: false },
-          wordWrap: "on",
-          lineNumbers: "on",
-          automaticLayout: true,
-        }}
-      />
+      {/* Editor Container - This wrapper is needed to position the AI helper correctly */}
+      <div className="relative">
+        {/* Solidity Code Editor */}
+        <Editor
+          height="400px"
+          width="100%"
+          theme="vs-dark"
+          defaultLanguage="solidity"
+          defaultValue={code}
+          onChange={handleEditorChange}
+          onMount={handleEditorDidMount}
+          options={{
+            fontSize: 14,
+            minimap: { enabled: false },
+            wordWrap: "on",
+            lineNumbers: "on",
+            automaticLayout: true,
+          }}
+        />
+
+        {/* AI Helper Button */}
+        {showAiHelper && (
+          <div 
+            className="absolute z-10 cursor-pointer"
+            style={{ 
+              left: `${helperPosition.x}px`, 
+              top: `${helperPosition.y}px` 
+            }}
+          >
+            <button 
+              onClick={askAi}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm shadow-lg flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Ask AI
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* AI Response Modal */}
+      {showAiResponseModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-2xl p-8 max-w-4xl w-full max-h-[85vh] overflow-hidden border border-gray-700/50">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-3">
+          <div className="bg-purple-500/20 p-2 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+          </div>
+          <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+            AI Analysis Report
+          </h3>
+        </div>
+        <button 
+          onClick={() => setShowAiResponseModal(false)}
+          className="p-2 hover:bg-gray-700/50 rounded-lg transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-400 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="space-y-6 overflow-y-auto max-h-[calc(85vh-12rem)] pr-4 custom-scrollbar">
+        {/* Selected Code Section */}
+        <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+          <div className="p-4 border-b border-gray-700/50">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              <h4 className="font-bold text-yellow-400">Selected Code</h4>
+            </div>
+          </div>
+          <pre className="p-4 text-sm font-mono text-gray-300 bg-black/20">{selectedCode}</pre>
+        </div>
+
+        {/* Analysis Section */}
+        <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+          <div className="p-4 border-b border-gray-700/50">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <h4 className="font-bold text-green-400">Analysis Results</h4>
+            </div>
+          </div>
+          <div className="p-4">
+            {isAiLoading ? (
+              <div className="flex flex-col items-center justify-center p-8 gap-4">
+                <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-purple-500"></div>
+                <p className="text-gray-400">Analyzing your code...</p>
+              </div>
+            ) : (
+              <div className="prose prose-invert max-w-none">
+                <div className="text-gray-300 leading-relaxed whitespace-pre-wrap">{aiResponse}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="mt-6 pt-4 border-t border-gray-700/50 flex justify-end gap-3">
+        <button 
+          onClick={() => {
+            // Add copy to clipboard functionality
+            navigator.clipboard.writeText(aiResponse);
+          }}
+          className="px-4 py-2 rounded-lg bg-gray-700/50 text-gray-300 hover:bg-gray-700 transition-colors flex items-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Copy
+        </button>
+        <button 
+          onClick={() => setShowAiResponseModal(false)}
+          className="px-4 py-2 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition-colors"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Display Errors */}
       {compilationError && (
@@ -448,6 +809,83 @@ contract MyContract {
           {renderContractFunctions()}
         </div>
       )}
+      {/* Preview Feature */}
+<div className="mt-8">
+  <button 
+    onClick={() => setShowPreviewPanel(!showPreviewPanel)} 
+    className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded text-white font-bold mb-4 flex items-center gap-2"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm12 0H5v10h10V5z" clipRule="evenodd" />
+    </svg>
+    {showPreviewPanel ? "Hide UI Preview" : "Show UI Preview"}
+  </button>
+  
+  {showPreviewPanel && (
+    <div className="bg-gray-800 rounded-lg p-6">
+      <h2 className="text-xl font-bold mb-4">React Component Generator</h2>
+      
+      <div className="flex gap-2 mb-4">
+        <input
+          type="text"
+          value={previewQuery}
+          onChange={(e) => setPreviewQuery(e.target.value)}
+          placeholder="Describe the UI component you want (e.g., 'Create a buy token form with price display')"
+          className="flex-1 bg-gray-700 p-3 rounded text-white"
+        />
+        <button
+          onClick={generateReactComponent}
+          disabled={isGeneratingComponent}
+          className={`px-4 py-2 rounded font-bold ${isGeneratingComponent ? 'bg-gray-500' : 'bg-green-600 hover:bg-green-700'}`}
+        >
+          {isGeneratingComponent ? (
+            <div className="flex items-center gap-2">
+              <div className="animate-spin h-5 w-5 border-t-2 border-white rounded-full"></div>
+              <span>Generating...</span>
+            </div>
+          ) : "Generate Component"}
+        </button>
+      </div>
+      
+      {generatedComponent && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-gray-900 rounded-lg overflow-hidden">
+            <div className="bg-gray-800 p-3 border-b border-gray-700">
+              <h3 className="font-bold">Component Code</h3>
+            </div>
+            <Editor
+              height="400px"
+              width="100%"
+              theme="vs-dark"
+              defaultLanguage="javascript"
+              value={previewCode}
+              onChange={handleReactEditorChange}
+              onMount={handleReactEditorDidMount}
+              options={{
+                fontSize: 14,
+                minimap: { enabled: false },
+                wordWrap: "on",
+                lineNumbers: "on",
+                automaticLayout: true,
+              }}
+            />
+            <div className="bg-gray-800 p-3 border-t border-gray-700 flex justify-end">
+              <button
+                onClick={() => navigator.clipboard.writeText(previewCode)}
+                className="bg-blue-500 px-3 py-1 rounded text-white hover:bg-blue-600 flex items-center gap-1"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy Code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )}
+</div>
     </div>
   );
 };
